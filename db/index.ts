@@ -1,13 +1,28 @@
 import { env } from "cloudflare:workers";
-import { drizzle } from "drizzle-orm/d1";
-import * as schema from "./schema";
+import postgres from "postgres";
 
-export function getDb() {
-  if (!env.DB) {
-    throw new Error(
-      "Cloudflare D1 binding `DB` is unavailable. Set the `d1` field in .openai/hosting.json to `DB` or let your control plane inject the real binding values before using the database."
-    );
+export type Sql = ReturnType<typeof postgres>;
+
+export function getDb(): Sql {
+  const connectionString = env.HYPERDRIVE?.connectionString || env.DATABASE_URL;
+  if (!connectionString) {
+    throw new Error("PostgreSQL no está configurado. Define DATABASE_URL o el binding HYPERDRIVE.");
   }
 
-  return drizzle(env.DB, { schema });
+  return postgres(connectionString, {
+    max: 1,
+    fetch_types: false,
+    prepare: true,
+    connect_timeout: 8,
+    idle_timeout: 5,
+  });
+}
+
+export async function withDb<T>(work: (sql: Sql) => Promise<T>): Promise<T> {
+  const sql = getDb();
+  try {
+    return await work(sql);
+  } finally {
+    await sql.end({ timeout: 1 });
+  }
 }
